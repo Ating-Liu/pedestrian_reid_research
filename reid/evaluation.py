@@ -8,10 +8,18 @@ import torch
 from torch import amp
 
 from .metrics import compute_distance_matrix, evaluate_rankings
+from .performance import images_to_device
 
 
 @torch.no_grad()
-def extract_features(model, dataloader, device: torch.device, use_amp: bool = True) -> tuple[torch.Tensor, np.ndarray, np.ndarray, list[str]]:
+def extract_features(
+    model,
+    dataloader,
+    device: torch.device,
+    use_amp: bool = True,
+    channels_last: bool = False,
+    keep_on_device: bool = False,
+) -> tuple[torch.Tensor, np.ndarray, np.ndarray, list[str]]:
     model.eval()
     features = []
     person_ids = []
@@ -19,24 +27,55 @@ def extract_features(model, dataloader, device: torch.device, use_amp: bool = Tr
     paths: list[str] = []
 
     for batch in dataloader:
-        images = batch["images"].to(device)
+        images = images_to_device(batch["images"], device, channels_last)
         with amp.autocast(device_type=device.type, enabled=use_amp and device.type == "cuda"):
             outputs = model(images)
-        features.append(outputs["bn_embeddings"].cpu())
-        person_ids.append(batch["person_ids"].cpu().numpy())
-        camera_ids.append(batch["camera_ids"].cpu().numpy())
+        embeddings = outputs["bn_embeddings"].detach().float()
+        features.append(embeddings if keep_on_device else embeddings.cpu())
+        person_ids.append(batch["person_ids"].numpy())
+        camera_ids.append(batch["camera_ids"].numpy())
         paths.extend(batch["paths"])
 
     return torch.cat(features, dim=0), np.concatenate(person_ids), np.concatenate(camera_ids), paths
 
 
 @torch.no_grad()
-def evaluate_model(model, query_loader, gallery_loader, device: torch.device, distance_metric: str = "cosine", max_rank: int = 20, use_amp: bool = True) -> dict[str, float]:
-    query_features, query_ids, query_camids, _ = extract_features(model, query_loader, device, use_amp=use_amp)
-    gallery_features, gallery_ids, gallery_camids, _ = extract_features(model, gallery_loader, device, use_amp=use_amp)
-    distmat = compute_distance_matrix(query_features, gallery_features, metric=distance_metric)
+def evaluate_model(
+    model,
+    query_loader,
+    gallery_loader,
+    device: torch.device,
+    distance_metric: str = "cosine",
+    max_rank: int = 20,
+    use_amp: bool = True,
+    channels_last: bool = False,
+    gpu_distance: bool = True,
+    gpu_distance_max_elements: int = 200_000_000,
+) -> dict[str, float]:
+    keep_features_on_device = device.type == "cuda" and gpu_distance
+    query_features, query_ids, query_camids, _ = extract_features(
+        model,
+        query_loader,
+        device,
+        use_amp=use_amp,
+        channels_last=channels_last,
+        keep_on_device=keep_features_on_device,
+    )
+    gallery_features, gallery_ids, gallery_camids, _ = extract_features(
+        model,
+        gallery_loader,
+        device,
+        use_amp=use_amp,
+        channels_last=channels_last,
+        keep_on_device=keep_features_on_device,
+    )
+    distance_elements = len(query_ids) * len(gallery_ids)
+    if keep_features_on_device and distance_elements <= gpu_distance_max_elements:
+        distmat = compute_distance_matrix(query_features, gallery_features, metric=distance_metric).cpu().numpy()
+    else:
+        distmat = compute_distance_matrix(query_features.cpu(), gallery_features.cpu(), metric=distance_metric).numpy()
     return evaluate_rankings(
-        distmat.cpu().numpy(),
+        distmat,
         query_ids=query_ids,
         gallery_ids=gallery_ids,
         query_camids=query_camids,
@@ -55,13 +94,34 @@ def save_ranked_results(
     num_queries: int = 10,
     distance_metric: str = "cosine",
     use_amp: bool = True,
+    channels_last: bool = False,
+    gpu_distance: bool = True,
+    gpu_distance_max_elements: int = 200_000_000,
 ) -> None:
     output_root = Path(output_dir)
     output_root.mkdir(parents=True, exist_ok=True)
-    query_features, query_ids, query_camids, query_paths = extract_features(model, query_loader, device, use_amp=use_amp)
-    gallery_features, gallery_ids, gallery_camids, gallery_paths = extract_features(model, gallery_loader, device, use_amp=use_amp)
-
-    distmat = compute_distance_matrix(query_features, gallery_features, metric=distance_metric).cpu().numpy()
+    keep_features_on_device = device.type == "cuda" and gpu_distance
+    query_features, query_ids, query_camids, query_paths = extract_features(
+        model,
+        query_loader,
+        device,
+        use_amp=use_amp,
+        channels_last=channels_last,
+        keep_on_device=keep_features_on_device,
+    )
+    gallery_features, gallery_ids, gallery_camids, gallery_paths = extract_features(
+        model,
+        gallery_loader,
+        device,
+        use_amp=use_amp,
+        channels_last=channels_last,
+        keep_on_device=keep_features_on_device,
+    )
+    distance_elements = len(query_ids) * len(gallery_ids)
+    if keep_features_on_device and distance_elements <= gpu_distance_max_elements:
+        distmat = compute_distance_matrix(query_features, gallery_features, metric=distance_metric).cpu().numpy()
+    else:
+        distmat = compute_distance_matrix(query_features.cpu(), gallery_features.cpu(), metric=distance_metric).numpy()
     indices = np.argsort(distmat, axis=1)
 
     selected_queries = min(num_queries, len(query_paths))

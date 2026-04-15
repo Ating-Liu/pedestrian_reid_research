@@ -19,6 +19,7 @@ This workspace is a standalone pedestrian re-identification project for resume, 
 - `scripts/benchmark.py`: print or run the full ablation matrix
 - `scripts/summarize_results.py`: build a Markdown experiment table from saved metrics
 - `docs/dataset_setup.md`: expected dataset folder structure
+- `docs/performance_tuning.md`: throughput-oriented training and evaluation settings
 - `docs/market1501_first_milestone.md`: exact first-stage execution checklist
 - `docs/project_brief.md`: resume bullets and interview notes
 
@@ -100,6 +101,8 @@ py -3.12 scripts/visualize_rankings.py \
   --dataset-name market1501 \
   --checkpoint outputs/market1501/full_model/market1501_full/best_model.pth
 ```
+
+Throughput-oriented defaults are enabled for CUDA training: AMP, TF32, CUDA prefetching, fused Adam, pinned memory, persistent workers, and GPU distance-matrix evaluation. `channels_last` is available but disabled by default because profiling showed it slows the current model on this machine. See `docs/performance_tuning.md` before changing worker or prefetch settings.
 
 Summarize metrics into a Markdown table:
 

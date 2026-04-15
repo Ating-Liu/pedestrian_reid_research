@@ -797,3 +797,129 @@ py -3.12 scripts\train.py --data-root datasets --dataset-name market1501 --exper
 - On Market-1501, report `market1501_local_aux_residual` as the best mAP variant and `market1501_transformer_aux_residual` as the best Rank-1 variant.
 - The strongest project narrative is not "Transformer always wins"; it is "local branches are easy to ignore or damage a strong ReID baseline, so auxiliary supervision and controlled residual fusion are necessary."
 - This conclusion is consistent with CUHK03-NP: the corrected local auxiliary design improves over baseline, while Transformer/gated fusion mainly changes the Rank-1 and mAP tradeoff.
+
+## 2026-04-14 Branch Marginalization Diagnostics And Report Refresh
+
+### Metadata
+
+- Type: offline checkpoint analysis and documentation update
+- Datasets: `Market-1501`, `CUHK03-NP`
+- Compared variants: `local_residual` vs `local_aux_residual`
+- Goal: strengthen the evidence chain for the claim that local branches can be marginalized without fixed residual fusion and local auxiliary supervision.
+
+### Method
+
+- Added reusable branch diagnostics that measure:
+  - final `local_residual_scale`;
+  - global/local/fused feature norms;
+  - fused-vs-global logit contribution;
+  - parameter-group gradient norms from a few training batches;
+  - fused/global/local retrieval metrics from trained checkpoints.
+- Added per-epoch model-state logging to future training runs, including `local_residual_scale`.
+- Added optional `--checkpoint-period` so future runs can save stage checkpoints for global/local discriminability trend analysis.
+- Added report generation for ablation status, stability status, experiment queue, and the final project narrative.
+
+### Commands
+
+```powershell
+py -3.12 scripts\analyze_branch_diagnostics.py --data-root datasets --dataset-name market1501 --output-dir outputs\analysis\branch_marginalization\market1501 --device cuda --batch-size 64 --num-workers 4 --prefetch-factor 2 --persistent-workers true --pin-memory true --channels-last true --use-amp true --max-train-batches 4 --run learnable_no_aux=outputs\market1501\local_branch\market1501_local_residual\best_model.pth --run fixed_aux=outputs\market1501\local_branch\market1501_local_aux_residual\best_model.pth
+```
+
+```powershell
+py -3.12 scripts\analyze_branch_diagnostics.py --data-root datasets --dataset-name cuhk03_np --output-dir outputs\analysis\branch_marginalization\cuhk03_np --device cuda --batch-size 64 --num-workers 4 --prefetch-factor 2 --persistent-workers true --pin-memory true --channels-last true --use-amp true --max-train-batches 4 --run learnable_no_aux=outputs\cuhk03_np\local_branch\cuhk03_np_local_residual\best_model.pth --run fixed_aux=outputs\cuhk03_np\local_branch\cuhk03_np_local_aux_residual\best_model.pth
+```
+
+```powershell
+py -3.12 scripts\build_research_reports.py --output-root outputs --docs-dir docs --stability-seeds 42,123,3407
+```
+
+### Outputs
+
+- Market diagnostics: `outputs/analysis/branch_marginalization/market1501`
+- CUHK03-NP diagnostics: `outputs/analysis/branch_marginalization/cuhk03_np`
+- Branch evidence document: `docs/branch_marginalization_analysis.md`
+- Ablation summary: `docs/ablation_summary.md`
+- Stability summary: `docs/stability_summary.md`
+- Final project narrative: `docs/project_narrative.md`
+- Missing experiment queue: `outputs/analysis/experiment_queue.md`
+- Refreshed experiment table: `outputs/experiment_table.md`
+
+### Key Findings
+
+- Market-1501 learnable residual without local auxiliary supervision has final `local_residual_scale = 4.29e-08`; CUHK03-NP has final `local_residual_scale = 0.00289`.
+- In these no-auxiliary runs, fused and global retrieval are effectively identical, while local-only retrieval is near random.
+- With fixed residual and local auxiliary supervision, local-only retrieval becomes meaningful:
+  - Market-1501 local-only: Rank-1 `91.83%`, mAP `79.05%`.
+  - CUHK03-NP local-only: Rank-1 `61.21%`, mAP `59.26%`.
+- Gradient diagnostics show the no-auxiliary local branch receives near-zero gradients, while the corrected local branch receives measurable gradients.
+
+### Decision
+
+- Use `docs/branch_marginalization_analysis.md` as the main evidence-chain document for the local-branch marginalization claim.
+- Do not claim multi-seed stability yet; `docs/stability_summary.md` explicitly records that only seed 42 is complete for the key baseline-vs-corrected comparison.
+- Prioritize the missing synergy ablations in `outputs/analysis/experiment_queue.md` before adding new model modules or MSMT17 experiments.
+
+## 2026-04-15 Narrative Strengthening Ablations And Multi-Seed Runs
+
+### Metadata
+
+- Type: long-running ablation and stability queue
+- Runner: `scripts/run_research_queue.py`
+- Goal: complete the remaining reinforcement items from `docs/project_narrative.md`:
+  - fixed residual only;
+  - local auxiliary with learnable residual;
+  - residual weight trend;
+  - local part number trend;
+  - baseline vs corrected variant multi-seed stability.
+
+### Runtime Notes
+
+- Initial `num_workers=12`, `persistent_workers=true` run hit a Windows DataLoader shared-memory mapping error `1455` during evaluation.
+- Queue commands were changed to `num_workers=4`, `prefetch_factor=2`, `persistent_workers=false` for long-run stability on Windows.
+- `market1501_fixed_residual_no_aux_w0_10` was resumed from `last_model.pth` after the worker failure.
+- `market1501_local_aux_residual_parts4` had one transient early exit with code `3221226505` and then completed successfully on rerun.
+- Full queue log: `outputs/analysis/run_logs/queue.log`.
+
+### Result Table
+
+| Dataset | Experiment | Seed | Rank-1 | mAP | Rank-5 | Rank-10 |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| market1501 | `market1501_fixed_residual_no_aux_w0_10` | `42` | `93.14%` | `83.07%` | `97.68%` | `98.63%` |
+| market1501 | `market1501_local_aux_learnable_residual_w0_10` | `42` | `93.56%` | `83.84%` | `97.80%` | `98.69%` |
+| market1501 | `market1501_local_aux_residual_w0_05` | `42` | `93.59%` | `84.08%` | `97.68%` | `98.46%` |
+| market1501 | `market1501_local_aux_residual_w0_20` | `42` | `93.41%` | `83.52%` | `97.65%` | `98.60%` |
+| market1501 | `market1501_local_aux_residual_parts4` | `42` | `93.65%` | `83.67%` | `97.77%` | `98.63%` |
+| market1501 | `market1501_local_aux_residual_parts8` | `42` | `94.06%` | `83.96%` | `97.83%` | `98.55%` |
+| market1501 | `market1501_baseline_seed123` | `123` | `93.68%` | `82.51%` | `98.01%` | `98.66%` |
+| market1501 | `market1501_local_aux_residual_seed123` | `123` | `93.29%` | `83.69%` | `97.89%` | `98.72%` |
+| market1501 | `market1501_baseline_seed3407` | `3407` | `93.68%` | `82.76%` | `98.04%` | `98.84%` |
+| market1501 | `market1501_local_aux_residual_seed3407` | `3407` | `93.38%` | `83.58%` | `97.95%` | `98.57%` |
+| cuhk03_np | `cuhk03_np_baseline_seed123` | `123` | `61.79%` | `59.35%` | `78.64%` | `86.07%` |
+| cuhk03_np | `cuhk03_np_local_aux_residual_seed123` | `123` | `63.07%` | `60.81%` | `80.50%` | `87.29%` |
+| cuhk03_np | `cuhk03_np_baseline_seed3407` | `3407` | `61.50%` | `58.97%` | `78.71%` | `86.36%` |
+| cuhk03_np | `cuhk03_np_local_aux_residual_seed3407` | `3407` | `61.57%` | `60.20%` | `79.29%` | `86.43%` |
+
+### Ablation Conclusions
+
+- Fixed residual alone is not enough to be the main explanation: compared with Market-1501 baseline, it changes Rank-1 by `-0.18` percentage points and mAP by `+0.14` percentage points.
+- Local auxiliary supervision is the main source of the corrected-branch gain: local auxiliary with learnable residual reaches Rank-1 `93.56%`, mAP `83.84%`.
+- Fixed residual plus local auxiliary reaches Rank-1 `93.62%`, mAP `83.81%`, so the final wording should be that fixed residual stabilizes and constrains the local contribution, while auxiliary supervision provides the strongest training signal.
+- Residual weight trend: `0.05` gives the best mAP (`84.08%`), `0.1` is a balanced and interpretable default, and `0.2` drops to mAP `83.52%`, suggesting the local residual should stay small.
+- Part number trend: `8` parts gives the best single-seed Market-1501 result (`94.06%` Rank-1, `83.96%` mAP), but this setting has not been multi-seed validated, so it should be reported as sensitivity analysis rather than the main contribution.
+
+### Stability Conclusions
+
+- Market-1501 multi-seed:
+  - Baseline: Rank-1 `93.56% ± 0.21 pp`, mAP `82.73% ± 0.21 pp`.
+  - Corrected local auxiliary residual: Rank-1 `93.43% ± 0.17 pp`, mAP `83.69% ± 0.11 pp`.
+  - Paired mAP gains are positive for all three seeds; Rank-1 is not stable on Market-1501.
+- CUHK03-NP multi-seed:
+  - Baseline: Rank-1 `61.57% ± 0.19 pp`, mAP `59.28% ± 0.28 pp`.
+  - Corrected local auxiliary residual: Rank-1 `62.81% ± 1.13 pp`, mAP `60.44% ± 0.33 pp`.
+  - Paired mAP gains are positive for all three seeds; Rank-1 is also positive but has larger variance.
+
+### Decision
+
+- Update final project narrative to emphasize stable mAP gains and avoid claiming universal Rank-1 improvement.
+- Keep `local_aux_residual` as the main corrected variant because it is simple and interpretable.
+- Treat `num_parts=8` and `local_residual_weight=0.05` as single-seed sensitivity findings, not as a new headline architecture.

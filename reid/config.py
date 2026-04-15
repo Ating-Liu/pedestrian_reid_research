@@ -27,8 +27,9 @@ class ExperimentConfig:
     batch_size: int = 64
     num_instances: int = 4
     num_workers: int = 12
-    prefetch_factor: int = 2
-    persistent_workers: bool = False
+    prefetch_factor: int = 4
+    persistent_workers: bool = True
+    pin_memory: bool = True
 
     backbone: str = "resnet50"
     pretrained: bool = True
@@ -57,14 +58,21 @@ class ExperimentConfig:
     triplet_weight: float = 1.0
     ce_weight: float = 1.0
     use_amp: bool = True
+    channels_last: bool = False
+    cuda_prefetch: bool = True
+    fused_optimizer: bool = True
     cudnn_benchmark: bool = True
     allow_tf32: bool = True
+    log_throughput: bool = True
     print_freq: int = 20
     eval_period: int = 5
+    checkpoint_period: int = 0
 
     checkpoint: str = ""
     max_rank: int = 20
     distance_metric: str = "cosine"
+    eval_gpu_distance: bool = True
+    eval_gpu_distance_max_elements: int = 200_000_000
     visualize_topk: int = 10
 
     def variant_name(self) -> str:
@@ -114,6 +122,7 @@ def build_parser(description: str) -> argparse.ArgumentParser:
     parser.add_argument("--num-workers", type=int, default=ExperimentConfig.num_workers)
     parser.add_argument("--prefetch-factor", type=int, default=ExperimentConfig.prefetch_factor)
     parser.add_argument("--persistent-workers", type=str2bool, default=ExperimentConfig.persistent_workers)
+    parser.add_argument("--pin-memory", type=str2bool, default=ExperimentConfig.pin_memory)
 
     parser.add_argument("--backbone", default=ExperimentConfig.backbone)
     parser.add_argument("--pretrained", type=str2bool, default=ExperimentConfig.pretrained)
@@ -142,14 +151,21 @@ def build_parser(description: str) -> argparse.ArgumentParser:
     parser.add_argument("--triplet-weight", type=float, default=ExperimentConfig.triplet_weight)
     parser.add_argument("--ce-weight", type=float, default=ExperimentConfig.ce_weight)
     parser.add_argument("--use-amp", type=str2bool, default=ExperimentConfig.use_amp)
+    parser.add_argument("--channels-last", type=str2bool, default=ExperimentConfig.channels_last)
+    parser.add_argument("--cuda-prefetch", type=str2bool, default=ExperimentConfig.cuda_prefetch)
+    parser.add_argument("--fused-optimizer", type=str2bool, default=ExperimentConfig.fused_optimizer)
     parser.add_argument("--cudnn-benchmark", type=str2bool, default=ExperimentConfig.cudnn_benchmark)
     parser.add_argument("--allow-tf32", type=str2bool, default=ExperimentConfig.allow_tf32)
+    parser.add_argument("--log-throughput", type=str2bool, default=ExperimentConfig.log_throughput)
     parser.add_argument("--print-freq", type=int, default=ExperimentConfig.print_freq)
     parser.add_argument("--eval-period", type=int, default=ExperimentConfig.eval_period)
+    parser.add_argument("--checkpoint-period", type=int, default=ExperimentConfig.checkpoint_period)
 
     parser.add_argument("--checkpoint", default=ExperimentConfig.checkpoint)
     parser.add_argument("--max-rank", type=int, default=ExperimentConfig.max_rank)
     parser.add_argument("--distance-metric", choices=["cosine", "euclidean"], default=ExperimentConfig.distance_metric)
+    parser.add_argument("--eval-gpu-distance", type=str2bool, default=ExperimentConfig.eval_gpu_distance)
+    parser.add_argument("--eval-gpu-distance-max-elements", type=int, default=ExperimentConfig.eval_gpu_distance_max_elements)
     parser.add_argument("--visualize-topk", type=int, default=ExperimentConfig.visualize_topk)
     return parser
 
@@ -169,6 +185,7 @@ def config_from_args(args: argparse.Namespace) -> ExperimentConfig:
         num_workers=args.num_workers,
         prefetch_factor=args.prefetch_factor,
         persistent_workers=args.persistent_workers,
+        pin_memory=args.pin_memory,
         backbone=args.backbone,
         pretrained=args.pretrained,
         last_stride=args.last_stride,
@@ -195,13 +212,20 @@ def config_from_args(args: argparse.Namespace) -> ExperimentConfig:
         triplet_weight=args.triplet_weight,
         ce_weight=args.ce_weight,
         use_amp=args.use_amp,
+        channels_last=args.channels_last,
+        cuda_prefetch=args.cuda_prefetch,
+        fused_optimizer=args.fused_optimizer,
         cudnn_benchmark=args.cudnn_benchmark,
         allow_tf32=args.allow_tf32,
+        log_throughput=args.log_throughput,
         print_freq=args.print_freq,
         eval_period=args.eval_period,
+        checkpoint_period=args.checkpoint_period,
         checkpoint=args.checkpoint,
         max_rank=args.max_rank,
         distance_metric=args.distance_metric,
+        eval_gpu_distance=args.eval_gpu_distance,
+        eval_gpu_distance_max_elements=args.eval_gpu_distance_max_elements,
         visualize_topk=args.visualize_topk,
     )
     if cfg.use_transformer and not cfg.use_local_branch:

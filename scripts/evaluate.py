@@ -9,6 +9,7 @@ from reid.config import parse_args
 from reid.data import build_dataloaders
 from reid.evaluation import evaluate_model
 from reid.model import build_model
+from reid.performance import configure_torch_runtime, model_to_device
 from reid.utils import load_checkpoint, resolve_device, save_json
 
 
@@ -42,10 +43,11 @@ def main() -> None:
         raise ValueError("--checkpoint is required for evaluation")
 
     device = resolve_device(config.device)
+    configure_torch_runtime(device, config.cudnn_benchmark, config.allow_tf32)
     checkpoint = load_checkpoint(config.checkpoint, device)
     _apply_checkpoint_model_config(config, checkpoint)
     _, query_loader, gallery_loader, bundle = build_dataloaders(config)
-    model = build_model(config, num_classes=bundle.num_train_ids).to(device)
+    model = model_to_device(build_model(config, num_classes=bundle.num_train_ids), device, config.channels_last)
     model.load_state_dict(checkpoint["model"])
 
     metrics = evaluate_model(
@@ -56,6 +58,9 @@ def main() -> None:
         distance_metric=config.distance_metric,
         max_rank=config.max_rank,
         use_amp=config.use_amp,
+        channels_last=config.channels_last,
+        gpu_distance=config.eval_gpu_distance,
+        gpu_distance_max_elements=config.eval_gpu_distance_max_elements,
     )
     print(metrics)
     save_json(Path(config.checkpoint).with_name("eval_metrics.json"), metrics)

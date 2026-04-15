@@ -9,6 +9,7 @@ from reid.config import parse_args
 from reid.data import build_dataloaders
 from reid.evaluation import save_ranked_results
 from reid.model import build_model
+from reid.performance import configure_torch_runtime, model_to_device
 from reid.utils import load_checkpoint, resolve_device
 
 
@@ -42,10 +43,11 @@ def main() -> None:
         raise ValueError("--checkpoint is required for visualization")
 
     device = resolve_device(config.device)
+    configure_torch_runtime(device, config.cudnn_benchmark, config.allow_tf32)
     checkpoint = load_checkpoint(config.checkpoint, device)
     _apply_checkpoint_model_config(config, checkpoint)
     _, query_loader, gallery_loader, bundle = build_dataloaders(config)
-    model = build_model(config, num_classes=bundle.num_train_ids).to(device)
+    model = model_to_device(build_model(config, num_classes=bundle.num_train_ids), device, config.channels_last)
     model.load_state_dict(checkpoint["model"])
 
     output_dir = Path(config.checkpoint).with_suffix("").parent / "rankings"
@@ -59,6 +61,9 @@ def main() -> None:
         num_queries=10,
         distance_metric=config.distance_metric,
         use_amp=config.use_amp,
+        channels_last=config.channels_last,
+        gpu_distance=config.eval_gpu_distance,
+        gpu_distance_max_elements=config.eval_gpu_distance_max_elements,
     )
     print(f"Saved ranking visualizations to {output_dir}")
 

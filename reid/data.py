@@ -42,13 +42,14 @@ class ReIDImageDataset(Dataset):
 
     def __getitem__(self, index: int):
         record = self.records[index]
-        image = Image.open(record.path).convert("RGB")
+        with Image.open(record.path) as raw_image:
+            image = raw_image.convert("RGB")
         if self.transform is not None:
             image = self.transform(image)
         return {
             "images": image,
-            "person_ids": torch.tensor(record.person_id, dtype=torch.long),
-            "camera_ids": torch.tensor(record.camera_id, dtype=torch.long),
+            "person_ids": record.person_id,
+            "camera_ids": record.camera_id,
             "paths": record.path,
         }
 
@@ -202,9 +203,10 @@ def build_dataloaders(config) -> tuple[DataLoader, DataLoader, DataLoader, Datas
     query_dataset = ReIDImageDataset(bundle.query, transform=eval_transform)
     gallery_dataset = ReIDImageDataset(bundle.gallery, transform=eval_transform)
 
+    use_cuda_pinning = config.pin_memory and str(config.device).startswith("cuda") and torch.cuda.is_available()
     loader_kwargs = {
         "num_workers": config.num_workers,
-        "pin_memory": True,
+        "pin_memory": use_cuda_pinning,
     }
     if config.num_workers > 0:
         loader_kwargs["persistent_workers"] = config.persistent_workers

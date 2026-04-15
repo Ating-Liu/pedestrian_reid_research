@@ -11,14 +11,7 @@ class LabelSmoothingCrossEntropy(nn.Module):
         self.smoothing = smoothing
 
     def forward(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
-        if self.smoothing <= 0:
-            return F.cross_entropy(logits, targets)
-        num_classes = logits.size(1)
-        log_probs = F.log_softmax(logits, dim=1)
-        true_dist = torch.zeros_like(log_probs)
-        true_dist.fill_(self.smoothing / max(1, num_classes - 1))
-        true_dist.scatter_(1, targets.unsqueeze(1), 1.0 - self.smoothing)
-        return torch.mean(torch.sum(-true_dist * log_probs, dim=1))
+        return F.cross_entropy(logits, targets, label_smoothing=self.smoothing)
 
 
 class BatchHardTripletLoss(nn.Module):
@@ -32,21 +25,14 @@ class BatchHardTripletLoss(nn.Module):
         mask_neg = ~mask_pos
         mask_pos.fill_diagonal_(False)
 
-        hardest_pos = []
-        hardest_neg = []
-        for i in range(dist_mat.size(0)):
-            pos = dist_mat[i][mask_pos[i]]
-            neg = dist_mat[i][mask_neg[i]]
-            if pos.numel() == 0 or neg.numel() == 0:
-                continue
-            hardest_pos.append(pos.max())
-            hardest_neg.append(neg.min())
-
-        if not hardest_pos:
+        hardest_pos = dist_mat.masked_fill(~mask_pos, -torch.inf).max(dim=1).values
+        hardest_neg = dist_mat.masked_fill(~mask_neg, torch.inf).min(dim=1).values
+        valid = torch.isfinite(hardest_pos) & torch.isfinite(hardest_neg)
+        if not torch.any(valid):
             return embeddings.new_tensor(0.0)
 
-        hardest_pos_t = torch.stack(hardest_pos)
-        hardest_neg_t = torch.stack(hardest_neg)
+        hardest_pos_t = hardest_pos[valid]
+        hardest_neg_t = hardest_neg[valid]
         target = hardest_neg_t.new_ones(hardest_neg_t.size(0))
         return self.ranking_loss(hardest_neg_t, hardest_pos_t, target)
 
@@ -83,9 +69,9 @@ class ReIDCriterion(nn.Module):
                 self.ce_weight * local_ce_loss + self.triplet_weight * local_triplet_loss
             )
         return total, {
-            "ce_loss": float(ce_loss.detach()),
-            "triplet_loss": float(triplet_loss.detach()),
-            "local_ce_loss": float(local_ce_loss.detach()),
-            "local_triplet_loss": float(local_triplet_loss.detach()),
-            "total_loss": float(total.detach()),
+            "ce_loss": ce_loss.detach(),
+            "triplet_loss": triplet_loss.detach(),
+            "local_ce_loss": local_ce_loss.detach(),
+            "local_triplet_loss": local_triplet_loss.detach(),
+            "total_loss": total.detach(),
         }
